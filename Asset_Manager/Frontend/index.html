@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Digital Twin Asset Manager</title>
+  <style>
+    :root {
+      --primary-color: #4a90e2;
+      --accent-color: #f5f7fa;
+      --text-color: #333;
+      --border-radius: 8px;
+    }
+
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      margin: 0;
+      padding: 0;
+      background-color: var(--accent-color);
+      color: var(--text-color);
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 40px auto;
+      padding: 20px;
+      background: white;
+      border-radius: var(--border-radius);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+
+    .banner {
+      width: 100%;
+      border-radius: var(--border-radius);
+      margin-bottom: 20px;
+    }
+
+    h1, h2 {
+      color: var(--primary-color);
+      margin-bottom: 10px;
+    }
+
+    input[type="file"], input[type="text"], select {
+      padding: 10px;
+      margin: 10px 0;
+      width: 100%;
+      border: 1px solid #ccc;
+      border-radius: var(--border-radius);
+      box-sizing: border-box;
+    }
+
+    button {
+      background-color: var(--primary-color);
+      color: white;
+      border: none;
+      padding: 10px 16px;
+      margin-top: 10px;
+      border-radius: var(--border-radius);
+      cursor: pointer;
+      transition: background-color 0.3s ease;
+    }
+
+    button:hover {
+      background-color: #357ab8;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+    }
+
+    th, td {
+      padding: 12px;
+      border-bottom: 1px solid #ddd;
+      text-align: left;
+    }
+
+    th {
+      background-color: #f0f4f8;
+      cursor: pointer;
+    }
+
+    tr:hover {
+      background-color: #f9fcff;
+    }
+
+    @media (max-width: 600px) {
+      .container {
+        margin: 20px;
+        padding: 15px;
+      }
+
+      table, thead, tbody, th, td, tr {
+        display: block;
+        width: 100%;
+      }
+
+      th, td {
+        padding: 10px;
+        border: none;
+      }
+
+      tr {
+        margin-bottom: 15px;
+        background: #fff;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+        border-radius: var(--border-radius);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <img src="digital-factory.png" alt="Digital Asset Factory" class="banner" />
+
+    <h1>Digital Twin Asset Manager</h1>
+
+    <h2>Upload Asset</h2>
+    <input type="file" id="fileInput" />
+    <button onclick="uploadFile()">Upload</button>
+
+    <h2>Filter Assets</h2>
+    <input type="text" id="filterInput" placeholder="Search by name..." oninput="applyFilter()" />
+    <select id="typeFilter" onchange="applyFilter()">
+      <option value="">All Types</option>
+      <option value="usd">USD</option>
+      <option value="fbx">FBX</option>
+      <option value="blend">BLEND</option>
+      <option value="obj">OBJ</option>
+      <option value="png">PNG</option>
+      <option value="jpg">JPG</option>
+    </select>
+
+    <h2>Uploaded Assets</h2>
+    <button onclick="listAssets()">Refresh List</button>
+    <table id="assetTable">
+      <thead>
+        <tr>
+          <th onclick="sortAssets('name')">Name</th>
+          <th onclick="sortAssets('size')">Size (KB)</th>
+          <th onclick="sortAssets('last_modified')">Last Modified</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <script>
+    const API_BASE = "https://w28y29r3s9.execute-api.us-east-1.amazonaws.com/xr-asset-api-deployment";
+    let allAssets = [];
+
+    async function uploadFile() {
+      const fileInput = document.getElementById('fileInput');
+      if (!fileInput.files.length) {
+        alert("Select a file first!");
+        return;
+      }
+
+      const file = fileInput.files[0];
+      const filename = encodeURIComponent(file.name);
+      const contentType = encodeURIComponent(file.type || 'application/octet-stream');
+
+      console.log("Uploading:", file.name, "type:", file.type || 'application/octet-stream');
+
+      try {
+        const res = await fetch(`${API_BASE}/upload?filename=${filename}&contentType=${contentType}`);
+        const raw = await res.json();
+        const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+        const uploadURL = parsed.uploadURL;
+
+        console.log("Upload endpoint response:", parsed);
+
+        if (!uploadURL) {
+          alert("No upload URL returned!");
+          return;
+        }
+
+        const s3Res = await fetch(uploadURL, {
+          method: "PUT",
+          headers: { "Content-Type": file.type || 'application/octet-stream' },
+          body: file
+        });
+
+        if (s3Res.ok) {
+          alert("Upload successful!");
+          listAssets();
+        } else {
+          alert("S3 upload failed!");
+          console.error(await s3Res.text());
+        }
+
+      } catch (err) {
+        console.error(err);
+        alert("Upload failed!");
+      }
+    }
+
+    async function listAssets() {
+      const tbody = document.querySelector("#assetTable tbody");
+      tbody.innerHTML = "<tr><td colspan='4'>Loading...</td></tr>";
+      try {
+        const response = await fetch(`${API_BASE}/list`);
+        const data = await response.json();
+        const assets = typeof data.body === "string" ? JSON.parse(data.body) : data.body;
+        allAssets = assets;
+        applyFilter();
+      } catch (err) {
+        console.error(err);
+        tbody.innerHTML = "<tr><td colspan='4'>Error loading assets</td></tr>";
+      }
+    }
+
+    function renderTable(assets) {
+      const tbody = document.querySelector("#assetTable tbody");
+      tbody.innerHTML = "";
+
+      if (!assets.length) {
+        tbody.innerHTML = "<tr><td colspan='4'>No assets uploaded yet</td></tr>";
+        return;
+      }
+
+      assets.forEach(asset => {
+        const tr = document.createElement('tr');
+
+        tr.innerHTML = `
+          <td>${asset.name}</td>
+          <td>${(asset.size / 1024).toFixed(2)}</td>
+          <td>${asset.last_modified}</td>
+          <td><button onclick="deleteAsset('${asset.name}')">Delete</button></td>
+        `;
+
+        tbody.appendChild(tr);
+      });
+    }
+
+    function applyFilter() {
+      const nameFilter = document.getElementById('filterInput').value.toLowerCase();
+      const typeFilter = document.getElementById('typeFilter').value.toLowerCase();
+
+      const filtered = allAssets.filter(asset => {
+        const nameMatch = asset.name.toLowerCase().includes(nameFilter);
+        const typeMatch = typeFilter ? asset.name.toLowerCase().endsWith(`.${typeFilter}`) : true;
+        return nameMatch && typeMatch;
+      });
+
+      renderTable(filtered);
+    }
+
+    function sortAssets(key) {
+      const allowedExtensions = ['blend', 'obj', 'fbx', 'usd', 'png'];
+
+      const filtered = allAssets.filter(asset => {
+        const ext = asset.name.split('.').pop().toLowerCase();
+        return allowedExtensions.includes(ext);
+      });
+
+      const sorted = [...filtered].sort((a, b) => {
+        if (key === 'size') return a.size - b.size;
+        if (key === 'last_modified') return new Date(a.last_modified) - new Date(b.last_modified);
+        return a.name.localeCompare(b.name);
+      });
+
+      renderTable(sorted);
+    }
+
+    async function deleteAsset(filename) {
+      if (!confirm(`Are you sure you want to delete "${filename}"?`)) return;
+
+      try {
+        const response = await fetch(`${API_BASE}/delete/${encodeURIComponent(filename)}`, { method: "DELETE" });
+        const result = await response.json();
+        alert(result.message || "Deleted successfully!");
+        listAssets();
+      } catch (err) {
+        console.error(err);
+        alert("Delete failed!");
+      }
+    }
+
+    listAssets();
+  </script>
+</body>
+</html>
